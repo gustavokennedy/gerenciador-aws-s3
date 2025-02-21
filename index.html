@@ -282,11 +282,26 @@
         let searchResults = null;
         const searchCache = new Map();
 
-        // Atualizar breadcrumb
+        // Atualizar breadcrumb com "Página Inicial" fixa
         function updateBreadcrumb(bucketName, prefix) {
             const breadcrumbDiv = document.getElementById('breadcrumb');
             breadcrumbDiv.innerHTML = '';
 
+            // Adicionar "Página Inicial" como primeiro item
+            const homeSpan = document.createElement('span');
+            homeSpan.textContent = 'Página Inicial';
+            homeSpan.onclick = () => showBuckets();
+            breadcrumbDiv.appendChild(homeSpan);
+
+            if (!bucketName) return; // Se não houver bucket, para aqui
+
+            // Adicionar separador após "Página Inicial"
+            const homeSeparator = document.createElement('span');
+            homeSeparator.textContent = ' > ';
+            homeSeparator.className = 'separator';
+            breadcrumbDiv.appendChild(homeSeparator);
+
+            // Adicionar bucket e pastas
             const prefixParts = prefix ? prefix.split('/').filter(Boolean) : [];
             const parts = [bucketName, ...prefixParts];
 
@@ -301,7 +316,7 @@
                         navigationStack.push(...newStack);
                     }
                     if (index === 0) {
-                        showBuckets();
+                        listContents(bucketName, '');
                     } else {
                         listContents(bucketName, prefixSoFar);
                     }
@@ -331,6 +346,7 @@
             currentBucket = null;
             currentPrefix = '';
             navigationStack.length = 0;
+            updateBreadcrumb(null, ''); // Mostrar apenas "Página Inicial"
         }
 
         // Preencher o select com os buckets disponíveis
@@ -555,7 +571,6 @@
                 return;
             }
 
-            // Desabilitar botão e mostrar carregamento
             uploadButton.classList.add('disabled');
             uploadButton.disabled = true;
             uploadLoading.style.display = 'inline';
@@ -587,11 +602,10 @@
                 } catch (error) {
                     alert(`Erro ao fazer upload: ${error.message}`);
                 } finally {
-                    // Reabilitar botão e esconder carregamento
                     uploadButton.classList.remove('disabled');
                     uploadButton.disabled = false;
                     uploadLoading.style.display = 'none';
-                    fileInput.value = ''; // Limpar input de arquivo
+                    fileInput.value = '';
                 }
             };
             reader.onerror = () => {

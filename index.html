@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gerenciador AWS S3 - Por Gustavo Kennedy Renkel</title>
+    <title>Gerenciador S3</title>
     <style>
         * {
             margin: 0;
@@ -52,13 +52,36 @@
             align-items: center;
             gap: 15px;
             animation: slideUp 0.5s ease-out;
+            position: relative;
         }
 
         .upload-section input[type="file"] {
             padding: 5px;
         }
 
-        .bucket-list, .file-list {
+        .upload-section select {
+            padding: 8px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 1em;
+            max-width: 200px;
+        }
+
+        .search-section {
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+        }
+
+        .search-section input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 1em;
+        }
+
+        .content {
             margin-bottom: 40px;
         }
 
@@ -84,6 +107,7 @@
             align-items: center;
             gap: 10px;
             font-size: 1.1em;
+            cursor: pointer;
         }
 
         .item button {
@@ -115,7 +139,7 @@
             background: #e63946;
         }
 
-        button.upload-btn {
+        button.upload-btn, button.back-btn {
             padding: 12px 25px;
             border: none;
             border-radius: 8px;
@@ -127,8 +151,53 @@
             transition: transform 0.3s;
         }
 
-        button.upload-btn:hover {
+        button.back-btn {
+            background: linear-gradient(90deg, #6b7280, #9ca3af);
+            margin-bottom: 20px;
+        }
+
+        button.upload-btn:hover, button.back-btn:hover {
             transform: scale(1.05);
+        }
+
+        button.upload-btn.disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .breadcrumb {
+            margin-bottom: 20px;
+            font-size: 1.1em;
+        }
+
+        .breadcrumb span {
+            color: #4a90e2;
+            cursor: pointer;
+            transition: color 0.3s;
+        }
+
+        .breadcrumb span:hover {
+            color: #357abd;
+            text-decoration: underline;
+        }
+
+        .breadcrumb span.separator {
+            color: #6b7280;
+            margin: 0 5px;
+            cursor: default;
+        }
+
+        .breadcrumb span.separator:hover {
+            color: #6b7280;
+            text-decoration: none;
+        }
+
+        #bucketsList, #contentsList {
+            display: none;
+        }
+
+        #bucketsList.active, #contentsList.active {
+            display: block;
         }
 
         @keyframes fadeIn {
@@ -157,6 +226,15 @@
                 margin-left: 0;
                 width: 100%;
             }
+
+            .breadcrumb, .search-section input[type="text"] {
+                font-size: 0.9em;
+            }
+
+            .upload-section select {
+                max-width: 100%;
+                margin: 10px 0;
+            }
         }
     </style>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500&display=swap" rel="stylesheet">
@@ -168,81 +246,359 @@
         <div class="upload-section">
             <h2>Upload de Arquivo 📤</h2>
             <input type="file" id="fileInput">
-            <button class="upload-btn" onclick="uploadFile()">Upload</button>
+            <select id="bucketSelect">
+                <option value="">Selecione um bucket</option>
+            </select>
+            <button class="upload-btn" id="uploadButton" onclick="uploadFile()">Upload</button>
+            <span id="uploadLoading" style="display: none; margin-left: 10px;">🔄 Enviando...</span>
         </div>
 
-        <div class="bucket-list">
-            <h2>Buckets 📁</h2>
-            <div id="buckets"></div>
+        <div class="search-section">
+            <input type="text" id="searchInput" placeholder="Pesquisar buckets, pastas ou arquivos..." oninput="debouncedSearch()">
+            <span id="searchLoading" style="display: none; margin-left: 10px;">🔄 Carregando...</span>
         </div>
 
-        <div class="file-list">
-            <h2>Arquivos 📄</h2>
-            <div id="files"></div>
+        <div class="content">
+            <div id="bucketsList" class="active">
+                <h2>Buckets 📁</h2>
+                <div id="buckets"></div>
+            </div>
+
+            <div id="contentsList">
+                <div class="breadcrumb" id="breadcrumb"></div>
+                <button class="back-btn" id="backButton" onclick="goBack()">⬅️ Voltar</button>
+                <h2>Conteúdo 📄</h2>
+                <div id="contents"></div>
+            </div>
         </div>
     </div>
 
     <script>
         const API_URL = 'http://localhost:5000/api';
+        let currentBucket = null;
+        let currentPrefix = '';
+        const navigationStack = [];
+        let allBuckets = [];
+        let searchResults = null;
+        const searchCache = new Map();
 
-        // Listar buckets
-        async function listBuckets() {
-            const response = await fetch(`${API_URL}/buckets`);
-            const buckets = await response.json();
+        // Atualizar breadcrumb
+        function updateBreadcrumb(bucketName, prefix) {
+            const breadcrumbDiv = document.getElementById('breadcrumb');
+            breadcrumbDiv.innerHTML = '';
+
+            const prefixParts = prefix ? prefix.split('/').filter(Boolean) : [];
+            const parts = [bucketName, ...prefixParts];
+
+            parts.forEach((part, index) => {
+                const span = document.createElement('span');
+                const prefixSoFar = index === 0 ? '' : prefixParts.slice(0, index).join('/') + '/';
+                span.textContent = part;
+                span.onclick = () => {
+                    navigationStack.length = 0;
+                    if (index > 0) {
+                        const newStack = prefixParts.slice(0, index - 1).map((p, i) => prefixParts.slice(0, i + 1).join('/') + '/');
+                        navigationStack.push(...newStack);
+                    }
+                    if (index === 0) {
+                        showBuckets();
+                    } else {
+                        listContents(bucketName, prefixSoFar);
+                    }
+                };
+                breadcrumbDiv.appendChild(span);
+
+                if (index < parts.length - 1) {
+                    const separator = document.createElement('span');
+                    separator.textContent = ' > ';
+                    separator.className = 'separator';
+                    breadcrumbDiv.appendChild(separator);
+                }
+            });
+        }
+
+        // Mostrar lista de buckets e preencher o select
+        async function showBuckets() {
+            if (!allBuckets.length) {
+                const response = await fetch(`${API_URL}/buckets`);
+                allBuckets = await response.json();
+                populateBucketSelect();
+            }
+            renderBuckets();
+            document.getElementById('bucketsList').classList.add('active');
+            document.getElementById('contentsList').classList.remove('active');
+            document.getElementById('backButton').style.display = 'none';
+            currentBucket = null;
+            currentPrefix = '';
+            navigationStack.length = 0;
+        }
+
+        // Preencher o select com os buckets disponíveis
+        function populateBucketSelect() {
+            const bucketSelect = document.getElementById('bucketSelect');
+            bucketSelect.innerHTML = '<option value="">Selecione um bucket</option>';
+            allBuckets.forEach(bucket => {
+                const option = document.createElement('option');
+                option.value = bucket.Name;
+                option.textContent = bucket.Name;
+                bucketSelect.appendChild(option);
+            });
+        }
+
+        // Renderizar buckets com filtro
+        function renderBuckets() {
             const bucketsDiv = document.getElementById('buckets');
             bucketsDiv.innerHTML = '';
-            buckets.forEach(bucket => {
-                const div = document.createElement('div');
-                div.className = 'item';
-                div.innerHTML = `<span>📁 ${bucket.Name}</span>`;
-                div.onclick = () => listFiles(bucket.Name);
-                bucketsDiv.appendChild(div);
+            const filter = document.getElementById('searchInput').value.toLowerCase();
+
+            const bucketsToShow = searchResults && filter ? searchResults.buckets : allBuckets;
+            bucketsToShow.forEach(bucket => {
+                if (!filter || bucket.Name.toLowerCase().includes(filter)) {
+                    const div = document.createElement('div');
+                    div.className = 'item';
+                    div.innerHTML = `<span>📁 ${bucket.Name}</span>`;
+                    div.onclick = () => listContents(bucket.Name, '');
+                    bucketsDiv.appendChild(div);
+                }
             });
         }
 
-        // Listar arquivos
-        async function listFiles(bucketName) {
-            const response = await fetch(`${API_URL}/bucket/${bucketName}`);
-            const files = await response.json();
-            const filesDiv = document.getElementById('files');
-            filesDiv.innerHTML = '';
-            files.forEach(file => {
-                const div = document.createElement('div');
-                div.className = 'item';
-                div.innerHTML = `
-                    <span>📄 ${file.Key}</span>
-                    <div>
-                        <button class="download" onclick="downloadFile('${bucketName}', '${file.Key}')">Download</button>
-                        <button class="delete" onclick="deleteFile('${bucketName}', '${file.Key}')">Delete</button>
-                    </div>
-                `;
-                filesDiv.appendChild(div);
+        // Listar conteúdo de um bucket ou pasta
+        async function listContents(bucketName, prefix) {
+            currentBucket = bucketName;
+            currentPrefix = prefix;
+
+            const filter = document.getElementById('searchInput').value.toLowerCase();
+            let data;
+            if (searchResults && filter && searchResults.contents[bucketName]?.[prefix]) {
+                data = searchResults.contents[bucketName][prefix];
+            } else {
+                const response = await fetch(`${API_URL}/bucket/${bucketName}?prefix=${prefix}`);
+                data = await response.json();
+            }
+
+            const contentsDiv = document.getElementById('contents');
+            contentsDiv.innerHTML = '';
+
+            document.getElementById('bucketsList').classList.remove('active');
+            document.getElementById('contentsList').classList.add('active');
+            document.getElementById('backButton').style.display = prefix ? 'block' : 'inline-block';
+            updateBreadcrumb(bucketName, prefix);
+
+            // Listar pastas
+            data.folders.forEach(folder => {
+                const folderName = folder.Prefix.replace(prefix, '').replace('/', '');
+                if (!filter || folderName.toLowerCase().includes(filter)) {
+                    const div = document.createElement('div');
+                    div.className = 'item';
+                    div.innerHTML = `<span>📁 ${folderName}</span>`;
+                    div.onclick = () => {
+                        navigationStack.push(currentPrefix);
+                        listContents(bucketName, folder.Prefix);
+                    };
+                    contentsDiv.appendChild(div);
+                }
+            });
+
+            // Listar arquivos
+            data.files.forEach(file => {
+                const fileName = file.Key.replace(prefix, '');
+                if (!filter || fileName.toLowerCase().includes(filter)) {
+                    const div = document.createElement('div');
+                    div.className = 'item';
+                    div.innerHTML = `
+                        <span>📄 ${fileName}</span>
+                        <div>
+                            <button class="download" onclick="downloadFile('${bucketName}', '${file.Key}')">Download</button>
+                            <button class="delete" onclick="deleteFile('${bucketName}', '${file.Key}')">Delete</button>
+                        </div>
+                    `;
+                    contentsDiv.appendChild(div);
+                }
             });
         }
 
-        // Upload de arquivo
+        // Voltar ao nível anterior
+        function goBack() {
+            const previousPrefix = navigationStack.pop();
+            if (previousPrefix === undefined) {
+                showBuckets();
+            } else {
+                listContents(currentBucket, previousPrefix);
+            }
+        }
+
+        // Debounce para limitar chamadas frequentes
+        function debounce(func, wait) {
+            let timeout;
+            return function (...args) {
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(this, args), wait);
+            };
+        }
+
+        // Função de busca otimizada
+        async function search() {
+            const filter = document.getElementById('searchInput').value.trim().toLowerCase();
+            const loadingIndicator = document.getElementById('searchLoading');
+            loadingIndicator.style.display = 'inline';
+
+            if (!filter) {
+                searchResults = null;
+                searchCache.clear();
+                await updateUI();
+                loadingIndicator.style.display = 'none';
+                return;
+            }
+
+            if (searchCache.has(filter)) {
+                searchResults = searchCache.get(filter);
+                await updateUI();
+                loadingIndicator.style.display = 'none';
+                return;
+            }
+
+            if (!allBuckets.length) {
+                const response = await fetch(`${API_URL}/buckets`);
+                allBuckets = await response.json();
+                populateBucketSelect();
+            }
+
+            searchResults = { buckets: [], contents: {} };
+
+            const bucketPromises = allBuckets.map(async (bucket) => {
+                const bucketName = bucket.Name;
+                const bucketMatches = bucketName.toLowerCase().includes(filter);
+
+                if (bucketMatches) {
+                    searchResults.buckets.push(bucket);
+                }
+
+                const contents = await searchBucketContents(bucketName, '', filter);
+                if (contents.folders.length || contents.files.length || bucketMatches) {
+                    searchResults.buckets.push(bucket);
+                    searchResults.contents[bucketName] = contents;
+                }
+            });
+
+            await Promise.all(bucketPromises);
+            searchResults.buckets = [...new Set(searchResults.buckets)];
+
+            searchCache.set(filter, JSON.parse(JSON.stringify(searchResults)));
+            await updateUI();
+            loadingIndicator.style.display = 'none';
+        }
+
+        // Busca recursiva no conteúdo do bucket
+        async function searchBucketContents(bucketName, prefix, filter) {
+            const cacheKey = `${bucketName}:${prefix}:${filter}`;
+            if (searchCache.has(cacheKey)) {
+                return searchCache.get(cacheKey);
+            }
+
+            const response = await fetch(`${API_URL}/bucket/${bucketName}?prefix=${prefix}`);
+            const data = await response.json();
+            const result = { folders: [], files: [] };
+
+            result.folders = data.folders.filter(folder =>
+                folder.Prefix.toLowerCase().includes(filter)
+            );
+            result.files = data.files.filter(file =>
+                file.Key.toLowerCase().includes(filter)
+            );
+
+            const subFolderPromises = data.folders.map(async (folder) => {
+                const folderName = folder.Prefix.toLowerCase();
+                if (folderName.includes(filter) || result.files.length > 0) {
+                    const subContents = await searchBucketContents(bucketName, folder.Prefix, filter);
+                    result.folders.push(...subContents.folders);
+                    result.files.push(...subContents.files);
+                }
+            });
+
+            await Promise.all(subFolderPromises);
+            result.folders = [...new Set(result.folders)];
+            result.files = [...new Set(result.files.map(f => JSON.stringify(f)))].map(f => JSON.parse(f));
+
+            searchCache.set(cacheKey, result);
+            return result;
+        }
+
+        // Atualizar a interface do usuário
+        async function updateUI() {
+            if (currentBucket) {
+                await listContents(currentBucket, currentPrefix);
+            } else {
+                renderBuckets();
+            }
+        }
+
+        // Debounce aplicado à função de busca
+        const debouncedSearch = debounce(search, 300);
+
+        // Upload de arquivo otimizado
         async function uploadFile() {
             const fileInput = document.getElementById('fileInput');
+            const bucketSelect = document.getElementById('bucketSelect');
+            const uploadButton = document.getElementById('uploadButton');
+            const uploadLoading = document.getElementById('uploadLoading');
             const file = fileInput.files[0];
-            if (!file) return alert('Selecione um arquivo');
-            
-            const bucketName = prompt('Digite o nome do bucket:');
-            if (!bucketName) return;
+            const bucketName = bucketSelect.value;
+
+            if (!file) {
+                alert('Por favor, selecione um arquivo! 📂');
+                return;
+            }
+
+            if (!bucketName) {
+                alert('Por favor, selecione um bucket! 📁');
+                return;
+            }
+
+            // Desabilitar botão e mostrar carregamento
+            uploadButton.classList.add('disabled');
+            uploadButton.disabled = true;
+            uploadLoading.style.display = 'inline';
+
+            const prefix = currentBucket === bucketName ? currentPrefix : '';
+            const fileName = prefix + file.name;
 
             const reader = new FileReader();
             reader.onload = async (e) => {
-                const response = await fetch(`${API_URL}/upload/${bucketName}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        fileName: file.name,
-                        fileContent: e.target.result.split(',')[1]
-                    })
-                });
-                if (response.ok) {
-                    alert('Upload concluído! 🎉');
-                    listFiles(bucketName);
+                try {
+                    const response = await fetch(`${API_URL}/upload/${bucketName}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            fileName: fileName,
+                            fileContent: e.target.result.split(',')[1]
+                        })
+                    });
+
+                    if (response.ok) {
+                        alert('Upload concluído! 🎉');
+                        if (currentBucket === bucketName) {
+                            listContents(bucketName, prefix);
+                        }
+                    } else {
+                        const errorData = await response.json();
+                        alert(`Erro ao fazer upload: ${errorData.error || 'Tente novamente.'}`);
+                    }
+                } catch (error) {
+                    alert(`Erro ao fazer upload: ${error.message}`);
+                } finally {
+                    // Reabilitar botão e esconder carregamento
+                    uploadButton.classList.remove('disabled');
+                    uploadButton.disabled = false;
+                    uploadLoading.style.display = 'none';
+                    fileInput.value = ''; // Limpar input de arquivo
                 }
+            };
+            reader.onerror = () => {
+                alert('Erro ao ler o arquivo!');
+                uploadButton.classList.remove('disabled');
+                uploadButton.disabled = false;
+                uploadLoading.style.display = 'none';
             };
             reader.readAsDataURL(file);
         }
@@ -253,25 +609,25 @@
             const data = await response.json();
             const link = document.createElement('a');
             link.href = `data:application/octet-stream;base64,${data.content}`;
-            link.download = fileName;
+            link.download = fileName.split('/').pop();
             link.click();
         }
 
         // Deletar arquivo
         async function deleteFile(bucketName, fileName) {
-            if (confirm(`Tem certeza que deseja deletar ${fileName}? 🗑️`)) {
+            if (confirm(`Tem certeza que deseja deletar ${fileName.split('/').pop()}? 🗑️`)) {
                 const response = await fetch(`${API_URL}/delete/${bucketName}/${fileName}`, {
                     method: 'DELETE'
                 });
                 if (response.ok) {
                     alert('Arquivo deletado! ✅');
-                    listFiles(bucketName);
+                    listContents(bucketName, currentPrefix);
                 }
             }
         }
 
         // Inicializar
-        listBuckets();
+        showBuckets();
     </script>
 </body>
 </html>

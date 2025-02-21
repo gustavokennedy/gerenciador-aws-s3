@@ -30,13 +30,21 @@ def list_buckets():
     except ClientError as e:
         return jsonify({'error': str(e)}), 500
 
-# Listar arquivos em um bucket
+# Listar arquivos e pastas em um bucket
 @app.route('/api/bucket/<bucket_name>', methods=['GET'])
 def list_files(bucket_name):
+    prefix = request.args.get('prefix', '')  # Parâmetro opcional para subpastas
     try:
-        response = s3_client.list_objects_v2(Bucket=bucket_name)
-        files = [{'Key': obj['Key']} for obj in response.get('Contents', [])]
-        return jsonify(files)
+        response = s3_client.list_objects_v2(
+            Bucket=bucket_name,
+            Prefix=prefix,
+            Delimiter='/'
+        )
+        # Lista de arquivos
+        files = [{'Key': obj['Key']} for obj in response.get('Contents', []) if obj['Key'] != prefix]
+        # Lista de pastas (prefixos)
+        folders = [{'Prefix': prefix_obj['Prefix']} for prefix_obj in response.get('CommonPrefixes', [])]
+        return jsonify({'files': files, 'folders': folders})
     except ClientError as e:
         return jsonify({'error': str(e)}), 500
 
@@ -77,7 +85,6 @@ def delete_file(bucket_name, file_name):
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    # Verifica se as variáveis de ambiente estão definidas
     required_vars = ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION']
     missing_vars = [var for var in required_vars if not os.getenv(var)]
     if missing_vars:

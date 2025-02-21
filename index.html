@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gerenciador AWS S3 - Por Gustavo Kennedy Renkel</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Poppins', sans-serif;
+        }
+
+        body {
+            background: linear-gradient(135deg, #e6f0fa 0%, #f7f9fc 100%);
+            color: #2d3748;
+            padding: 30px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            font-size: 2.8em;
+            background: linear-gradient(90deg, #4a90e2, #63b3ed);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 40px;
+            animation: fadeIn 1s ease-in;
+        }
+
+        h2 {
+            font-size: 1.6em;
+            color: #4a5568;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+        }
+
+        .upload-section {
+            background: white;
+            padding: 25px;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.05);
+            margin-bottom: 40px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            animation: slideUp 0.5s ease-out;
+        }
+
+        .upload-section input[type="file"] {
+            padding: 5px;
+        }
+
+        .bucket-list, .file-list {
+            margin-bottom: 40px;
+        }
+
+        .item {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 3px 10px rgba(0,0,0,0.05);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+
+        .item:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+        }
+
+        .item span {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 1.1em;
+        }
+
+        .item button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .item button.download {
+            background: #4a90e2;
+            color: white;
+            margin-left: 10px;
+        }
+
+        .item button.download:hover {
+            background: #357abd;
+        }
+
+        .item button.delete {
+            background: #ff6b6b;
+            color: white;
+            margin-left: 10px;
+        }
+
+        .item button.delete:hover {
+            background: #e63946;
+        }
+
+        button.upload-btn {
+            padding: 12px 25px;
+            border: none;
+            border-radius: 8px;
+            background: linear-gradient(90deg, #28a745, #34c759);
+            color: white;
+            font-weight: 500;
+            font-size: 1.1em;
+            cursor: pointer;
+            transition: transform 0.3s;
+        }
+
+        button.upload-btn:hover {
+            transform: scale(1.05);
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes slideUp {
+            from { transform: translateY(20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        @media (max-width: 768px) {
+            .upload-section {
+                flex-direction: column;
+                text-align: center;
+            }
+
+            .item {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 10px;
+            }
+
+            .item button {
+                margin-left: 0;
+                width: 100%;
+            }
+        }
+    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <h1>Gerenciador S3 🚀</h1>
+
+        <div class="upload-section">
+            <h2>Upload de Arquivo 📤</h2>
+            <input type="file" id="fileInput">
+            <button class="upload-btn" onclick="uploadFile()">Upload</button>
+        </div>
+
+        <div class="bucket-list">
+            <h2>Buckets 📁</h2>
+            <div id="buckets"></div>
+        </div>
+
+        <div class="file-list">
+            <h2>Arquivos 📄</h2>
+            <div id="files"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:5000/api';
+
+        // Listar buckets
+        async function listBuckets() {
+            const response = await fetch(`${API_URL}/buckets`);
+            const buckets = await response.json();
+            const bucketsDiv = document.getElementById('buckets');
+            bucketsDiv.innerHTML = '';
+            buckets.forEach(bucket => {
+                const div = document.createElement('div');
+                div.className = 'item';
+                div.innerHTML = `<span>📁 ${bucket.Name}</span>`;
+                div.onclick = () => listFiles(bucket.Name);
+                bucketsDiv.appendChild(div);
+            });
+        }
+
+        // Listar arquivos
+        async function listFiles(bucketName) {
+            const response = await fetch(`${API_URL}/bucket/${bucketName}`);
+            const files = await response.json();
+            const filesDiv = document.getElementById('files');
+            filesDiv.innerHTML = '';
+            files.forEach(file => {
+                const div = document.createElement('div');
+                div.className = 'item';
+                div.innerHTML = `
+                    <span>📄 ${file.Key}</span>
+                    <div>
+                        <button class="download" onclick="downloadFile('${bucketName}', '${file.Key}')">Download</button>
+                        <button class="delete" onclick="deleteFile('${bucketName}', '${file.Key}')">Delete</button>
+                    </div>
+                `;
+                filesDiv.appendChild(div);
+            });
+        }
+
+        // Upload de arquivo
+        async function uploadFile() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            if (!file) return alert('Selecione um arquivo');
+            
+            const bucketName = prompt('Digite o nome do bucket:');
+            if (!bucketName) return;
+
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                const response = await fetch(`${API_URL}/upload/${bucketName}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        fileName: file.name,
+                        fileContent: e.target.result.split(',')[1]
+                    })
+                });
+                if (response.ok) {
+                    alert('Upload concluído! 🎉');
+                    listFiles(bucketName);
+                }
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // Download de arquivo
+        async function downloadFile(bucketName, fileName) {
+            const response = await fetch(`${API_URL}/download/${bucketName}/${fileName}`);
+            const data = await response.json();
+            const link = document.createElement('a');
+            link.href = `data:application/octet-stream;base64,${data.content}`;
+            link.download = fileName;
+            link.click();
+        }
+
+        // Deletar arquivo
+        async function deleteFile(bucketName, fileName) {
+            if (confirm(`Tem certeza que deseja deletar ${fileName}? 🗑️`)) {
+                const response = await fetch(`${API_URL}/delete/${bucketName}/${fileName}`, {
+                    method: 'DELETE'
+                });
+                if (response.ok) {
+                    alert('Arquivo deletado! ✅');
+                    listFiles(bucketName);
+                }
+            }
+        }
+
+        // Inicializar
+        listBuckets();
+    </script>
+</body>
+</html>

@@ -25,3 +25,34 @@ Um gerenciador visual robusto e intuitivo para controle rápido de objetos no AW
 1. Clone o repositório:
    ```bash
    git clone https://github.com/gustavokennedy/gerenciador-aws-s3.git
+2. Entre no diretório do projeto:
+   ```bash
+   cd gerenciador-aws-s3
+3. Crie um ambiente virtual:
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # Linux/Mac
+   venv\Scripts\activate     # Windows
+4. Configure suas credenciais AWS em um arquivo .env (exemplo abaixo):
+   ```bash
+   AWS_ACCESS_KEY_ID=
+   AWS_SECRET_ACCESS_KEY=
+   AWS_REGION=us-east-1
+5. Inicie o sistema (backend):
+   ```bash
+   python app.py
+
+## 🤝 Contribuindo
+Contribuições são bem-vindas! Siga os passos abaixo para contribuir:
+
+- Faça um fork do projeto.
+- Crie uma branch para sua feature (`git checkout -b feature/nova-funcionalidade`).
+- Commit suas mudanças (`git commit -m 'Adiciona nova funcionalidade'`).
+- Envie para o repositório remoto (`git push origin feature/nova-funcionalidade`).
+- Abra um Pull Request.
+- Por favor, leia o Código de Conduta e as Diretrizes de Contribuição antes de começar.
+
+## 🛠 Tecnologias Utilizadas
+- Backend: Python, Flask
+- Integração AWS: Boto3 (AWS SDK para Python)
+- Frontend: HTML, CSS, JavaScript
